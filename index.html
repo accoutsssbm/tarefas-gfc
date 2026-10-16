@@ -284,6 +284,7 @@ function normalizar(st){
     ATV.forEach(a=>{const t=f.t[a.k];while(t.st.length<a.steps.length)t.st.push(null);t.st.length=a.steps.length;t.prazo=t.prazo||''});
     f.csp=f.csp||'';f.resp=f.resp||'';f.modelos=f.modelos||[];f.baseCliente=f.baseCliente||'';f.id=f.id||uid();
     return f});
+  if(!st.cfg.na794){st.frotas.forEach(f=>{if(semMapa(f))f.t.mapa.na=true});st.cfg.na794=true}
   st.v=4;st.salvoEm=st.salvoEm||'';
   return st;
 }
@@ -307,41 +308,65 @@ function conta(lista){const c={tot:0,ok:0,eu:0,esp:0,lock:0,late:0};lista.forEac
 function sitHist(f,a){const e=estado(f,a);return {na:'NA',ok:'OK',lock:'BLOQUEADO',esp:'COBRAR'}[e]||(a.k==='rom'?'EU ATUALIZO':'COBRAR')}
 
 /* ---------- e-mails ---------- */
-const OBJ={hor:'a atualização dos horímetros',mapa:'o envio do histórico de trocas',vida:'a atualização da vida útil dos componentes',fc:'a atualização do forecast'};
-function email(f,a,reforco){
-  const mes=mesNome(S.mes), fr=`frota ${f.frota} (${f.cliente})`;
-  const dest=a.quem==='cons'?(f.resp||'Consultor'):(f.csp||'CSP');
-  const pz=f.t[a.k].prazo, prazo=pz||somaDias(hoje(),S.cfg.dias);
-  const ass=`\n\nAtenciosamente,\n${S.cfg.responsavel}\nGFC – Engenharia de Mineração Norte`;
-  const extra=(a.k==='vida'||a.k==='fc')?`\n\nA verificação realizada pela área GFC segue em anexo.`:'';
-  if(reforco){const d=dias(prazo);return `Prezado(a) ${dest},\n\nReforçamos a solicitação de ${OBJ[a.k]} da ${fr}, referente a ${mes}${!pz?'':d>0?`, cujo prazo venceu em ${fmt(pz)}`:`, com prazo em ${fmt(pz)}`}.\n\nSolicitamos, por gentileza, a conclusão com a maior brevidade possível.${ass}`}
-  return `Prezado(a) ${dest},\n\nSolicitamos ${OBJ[a.k]} da ${fr}, referente a ${mes}, até ${fmt(prazo)}.${extra}${ass}`;
+const OBJ={hor:'da atualização dos horímetros',mapa:'do Mapa de Trocas de Componentes atualizado',vida:'da atualização da vida útil dos componentes',fc:'da atualização do forecast'};
+const juntar=l=>l.length<2?(l[0]||''):l.slice(0,-1).join(', ')+' e '+l[l.length-1];
+const saudacao=()=>{const h=new Date().getHours();return h<12?'bom dia':h<18?'boa tarde':'boa noite'};
+const destDe=(f,a)=>(a.quem==='cons'?f.resp:f.csp)||'';
+const semMapa=f=>/794/.test(f.frota); /* histórico de trocas não é solicitado para a 794 */
+/* frotas do site que entram no mesmo e-mail (novo ou reforço) da atividade */
+function lote(f,a){
+  const tipo=tipoEmail(f,a);if(!tipo)return [];
+  const fs=S.frotas.filter(x=>x.cliente===f.cliente&&tipoEmail(x,a)===tipo&&!(a.k==='mapa'&&semMapa(x)));
+  return fs.includes(f)?fs:[f];
+}
+function email(fs,a,reforco){
+  const nomes=[...new Set(fs.map(f=>destDe(f,a)).filter(Boolean))], multi=nomes.length>1, sd=saudacao();
+  const men=juntar(nomes.map(n=>'@'+n)), frs=fs.map(f=>f.frota).join(', ');
+  const alvo=multi?'de suas respectivas frotas':`${fs.length>1?'das frotas':'da frota'} ${frs}`;
+  const quadro=multi?'\n\n'+[...new Set(fs.map(f=>destDe(f,a)))].map(d=>`• ${d||'Sem responsável cadastrado'}: ${fs.filter(f=>destDe(f,a)===d).map(f=>f.frota).join(', ')}`).join('\n'):'';
+  const abre=`${men||'Prezados'}, ${sd}!\n\n`;
+  const prazo=fmt(somaDias(hoje(),S.cfg.dias)), site=fs[0].cliente;
+  if(reforco){
+    const pz=fs.map(f=>f.t[a.k].prazo).filter(Boolean).sort()[0], d=pz?dias(pz):null;
+    const st=!pz?'':d>0?`, cujo prazo venceu em ${fmt(pz)}`:`, com prazo em ${fmt(pz)}`;
+    return `${abre}Reforço a solicitação ${OBJ[a.k]} ${alvo} (${site})${st}.${quadro}\n\nPeço, por gentileza, o retorno com a maior brevidade possível.`}
+  if(a.k==='hor')return `${abre}Solicito o input/atualização dos horímetros ${alvo} (${site}), com prazo máximo até ${prazo}.${quadro}\n\nO horímetro é a base de cálculo dos demais indicadores do Índice de Qualidade. Sem a leitura atualizada, não conseguimos realizar os ajustes necessários nem fechar os indicadores dentro do prazo.`;
+  if(a.k==='mapa')return `${multi?'Prezados':'Prezado(a)'}, ${sd}.\n\n${men?men+',\n\n':''}Gostaria de reforçar nosso foco na excelência do Índice de Qualidade e na manutenção da rotina de atualização do GFC. Para isso, solicito a gentileza de enviarem o Mapa de Trocas de Componentes atualizado ${alvo} (${site}) até ${prazo}.${quadro}\n\nEssa atualização é fundamental para garantirmos a precisão das nossas métricas e o alinhamento com os objetivos da área.\n\nFico à disposição para qualquer dúvida.`;
+  const ver=a.k==='vida'?'vida útil dos componentes':'forecast';
+  return `${abre}Segue em anexo a verificação de ${ver} ${alvo} (${site}), realizada pela área GFC e referente a ${mesNome(S.mes)}. Solicito a atualização até ${prazo}.${quadro}`;
 }
 function tipoEmail(f,a){const i=prox(f,a);if(i<0)return null;const s=a.steps[i];if(s.mail)return 'novo';if(!s.eu)return 'reforco';return null}
-async function copiar(txt,depois){
+async function copiar(txt,depois,msg){
   let ok=false;try{await navigator.clipboard.writeText(txt);ok=true}catch(e){}
   if(!ok){$('#dlg').innerHTML=`<p style="margin-top:0"><b>Copie o texto abaixo</b> (Ctrl+C)</p><textarea id="tx">${esc(txt)}</textarea><div class="row-acts" style="margin-top:10px;justify-content:flex-end"><button class="btn" type="button" data-act="fechaDlg">Fechar</button></div>`;$('#dlg').showModal();$('#tx').select()}
-  if(depois)toastAcao(ok?'Texto copiado. Após o envio, registrar:':'Após o envio, registrar:','Registrar e-mail enviado',depois);
-  else if(ok)toast('Texto copiado.');
+  if(depois)toastAcao(`${ok?'Texto copiado':'Texto pronto'} (${msg}). Após o envio, registrar:`,'Registrar e-mail enviado',depois);
+  else if(ok)toast(`Texto copiado (${msg}).`);
 }
 function copiarEmail(fid,k){
   const f=S.frotas.find(x=>x.id===fid),a=A(k),tipo=tipoEmail(f,a);if(!tipo)return;
-  const i=prox(f,a), marcar=a.steps[i].mail?()=>marcar_(fid,k,i):null;
-  copiar(email(f,a,tipo==='reforco'),marcar);
+  const fs=lote(f,a), marcar=tipo==='novo'?()=>marcarLote(fs.map(x=>x.id),k):null;
+  copiar(email(fs,a,tipo==='reforco'),marcar,`${f.cliente}: ${fs.map(x=>x.frota).join(', ')}`);
 }
 
 /* ---------- ações ---------- */
 function marcar_(fid,k,i){
   const f=S.frotas.find(x=>x.id===fid),a=A(k),t=f.t[k];
-  undo={fid,t:clone(f.t)};
+  undo=[{fid,t:clone(f.t)}];
   if(t.st[i]!==null){for(let j=i;j<t.st.length;j++)t.st[j]=null;if(i===0)t.prazo='';toast(`${a.n} (${f.frota}): etapa "${a.steps[i].n}" desfeita.`,true)}
   else{for(let j=0;j<=i;j++)if(t.st[j]===null)t.st[j]=hoje();
     if(a.steps[0].mail&&!t.prazo&&!feita(t))t.prazo=somaDias(hoje(),S.cfg.dias);
     toast(feita(t)?`${a.n} (${f.frota}): atividade concluída.`:`${a.n} (${f.frota}): e-mail registrado. Prazo: ${fmt(t.prazo)}.`,true)}
   salvar();render();
 }
-function toggleNA(fid,k){const f=S.frotas.find(x=>x.id===fid);undo={fid,t:clone(f.t)};f.t[k].na=!f.t[k].na;salvar();render()}
-function desfazer(){if(!undo)return;const f=S.frotas.find(x=>x.id===undo.fid);if(f)f.t=undo.t;undo=null;salvar();render();hideToast()}
+function marcarLote(ids,k){
+  const a=A(k),fs=S.frotas.filter(f=>ids.includes(f.id)&&f.t[k].st[0]===null);if(!fs.length)return;
+  undo=fs.map(f=>({fid:f.id,t:clone(f.t)}));
+  fs.forEach(f=>{const t=f.t[k];t.st[0]=hoje();if(!t.prazo&&!feita(t))t.prazo=somaDias(hoje(),S.cfg.dias)});
+  toast(`${a.n} (${fs[0].cliente}): e-mail registrado para ${fs.map(f=>f.frota).join(', ')}. Prazo: ${fmt(fs[0].t[k].prazo)}.`,true);
+  salvar();render();
+}
+function toggleNA(fid,k){const f=S.frotas.find(x=>x.id===fid);undo=[{fid,t:clone(f.t)}];f.t[k].na=!f.t[k].na;salvar();render()}
+function desfazer(){if(!undo)return;undo.forEach(u=>{const f=S.frotas.find(x=>x.id===u.fid);if(f)f.t=u.t});undo=null;salvar();render();hideToast()}
 
 let tT=null,tFn=null;
 function toast(m,u){$('#toast').innerHTML=`<span>${esc(m)}</span>${u?'<button type="button" data-act="undo">Desfazer</button>':''}`;$('#toast').classList.remove('hidden');clearTimeout(tT);tT=setTimeout(hideToast,5000)}
@@ -356,14 +381,14 @@ function proximo(fs){
 }
 function textoFoco(p){
   const {f,a}=p, fr=`frota ${f.frota}${aba==='geral'?' ('+f.cliente+')':''}`;
-  const dest=a.quem==='cons'?`ao consultor ${f.resp}`:'ao CSP';
   if(p.esp){const pz=f.t[a.k].prazo;const st=!pz?'sem prazo definido':p.d>0?`prazo vencido há ${p.d} dia${p.d===1?'':'s'}`:`prazo em ${fmt(pz)}`;
     return `Aguardando ${a.quem==='cons'?'o consultor':'o CSP'}: ${a.n.toLowerCase()} da ${fr} (${st}).`}
-  const txt={hor:`Enviar e-mail ${dest} solicitando a atualização do horímetro da ${fr}.`,
-    mapa:`Enviar e-mail ${dest} solicitando o histórico de trocas da ${fr}.`,
+  const fl=lote(f,a), frs=`${fl.length>1?'frotas':'frota'} ${fl.map(x=>x.frota).join(', ')} (${f.cliente})`;
+  const txt={hor:`Enviar e-mail aos CSPs solicitando a atualização dos horímetros: ${frs}.`,
+    mapa:`Enviar e-mail aos consultores solicitando o mapa de trocas: ${frs}.`,
     rom:`Atualizar o ROM da ${fr} no sistema.`,
-    vida:`Enviar ao CSP a verificação de vida útil da ${fr}.`,
-    fc:`Enviar ao CSP a verificação de forecast da ${fr}.`};
+    vida:`Enviar aos CSPs a verificação de vida útil: ${frs}.`,
+    fc:`Enviar aos CSPs a verificação de forecast: ${frs}.`};
   return txt[a.k];
 }
 function focoHtml(fs,escopo){
@@ -430,7 +455,7 @@ function linha(f,a){
   return `<div class="row ${e==='lock'?'lock':''} ${t.na?'na':''} ${e==='ok'?'done':''}">
     <div class="an">${a.n}<span class="tag ${q[1]}">${q[0]}</span>${t.na?'<small>não se aplica</small>':info}</div>
     <div class="steps">${steps}</div>
-    <div class="right">${tipo&&!t.na?`<button class="lnk" type="button" data-act="mail" data-fid="${f.id}" data-k="${a.k}">${tipo==='reforco'?'e-mail de reforço':'copiar e-mail'}</button>`:''}
+    <div class="right">${tipo&&!t.na?`<button class="lnk" type="button" data-act="mail" data-fid="${f.id}" data-k="${a.k}">${tipo==='reforco'?'reforço do site':'e-mail do site'}</button>`:''}
     <button class="nabtn" type="button" data-act="na" data-fid="${f.id}" data-k="${a.k}" aria-pressed="${t.na}" title="Não se aplica">N/A</button></div></div>`;
 }
 const sel={};
@@ -448,14 +473,14 @@ function vSite(s){
    <div class="fluxo" style="margin:10px 0 0">Sequência do mês: <span class="p">Horímetro + Histórico de trocas</span>→<span class="p">ROM</span>→<span class="p">Vida útil + Forecast</span></div>`;
 }
 function vAjustes(){
-  return `<div class="box2"><h3>Mês e responsável</h3><p>Mês de referência do controle e nome do responsável exibido na barra lateral e na assinatura dos e-mails.</p>
+  return `<div class="box2"><h3>Mês e responsável</h3><p>Mês de referência do controle e nome do responsável exibido na barra lateral.</p>
     <div class="row-acts"><input type="month" value="${esc(S.mes)}" data-set="mes"><input class="in" type="text" value="${esc(S.cfg.responsavel)}" data-set="responsavel" aria-label="Responsável">
     <button class="btn am" type="button" data-act="fechar">Fechar o mês e iniciar o próximo</button></div></div>
    <div class="box2"><h3>Backup no Excel</h3><p>Os dados ficam salvos neste navegador. Recomenda-se exportar periodicamente. Para restaurar, importar o arquivo exportado ou a planilha de controle anterior.</p>
     <div class="row-acts"><button class="btn" type="button" data-act="exportar">Exportar Excel</button><button class="btn" type="button" data-act="importar">Importar Excel</button></div></div>
    <div class="box2"><h3>Prazo padrão</h3><p>Prazo, em dias, definido automaticamente ao registrar o envio do e-mail. O prazo de cada atividade pode ser alterado na própria linha.</p>
     <div class="row-acts"><input type="number" min="1" max="31" value="${S.cfg.dias}" data-set="dias" style="width:80px"> dias</div></div>
-   <div class="box2"><h3>Frotas</h3><p>Cada cliente corresponde a um site na barra lateral. O CSP de cada frota é utilizado como destinatário nos e-mails de horímetro, vida útil e forecast.</p>
+   <div class="box2"><h3>Frotas</h3><p>Cada cliente corresponde a um site na barra lateral. Os e-mails são consolidados por site: o CSP de cada frota é mencionado nos e-mails de horímetro, vida útil e forecast, e o consultor no de histórico de trocas (exceto frotas 794).</p>
     <div class="tw"><table><thead><tr><th>Cliente (site)</th><th>Frota</th><th>Consultor</th><th>CSP</th><th>Cliente na base</th><th>Modelos</th><th></th></tr></thead><tbody>
     ${S.frotas.map(f=>`<tr><td><input value="${esc(f.cliente)}" data-fid="${f.id}" data-f="cliente"></td><td><input value="${esc(f.frota)}" data-fid="${f.id}" data-f="frota"></td><td><input value="${esc(f.resp)}" data-fid="${f.id}" data-f="resp"></td><td><input value="${esc(f.csp)}" data-fid="${f.id}" data-f="csp" placeholder="nome do CSP"></td><td><input value="${esc(f.baseCliente)}" data-fid="${f.id}" data-f="baseCliente"></td><td><input value="${esc(f.modelos.join(', '))}" data-fid="${f.id}" data-f="modelos"></td><td><button class="lnk" type="button" data-act="rm" data-fid="${f.id}">remover</button></td></tr>`).join('')}
     </tbody></table></div><div class="row-acts" style="margin-top:10px"><button class="btn" type="button" data-act="add">Adicionar frota</button></div></div>`;
